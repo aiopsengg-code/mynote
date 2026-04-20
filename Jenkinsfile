@@ -7,10 +7,6 @@ pipeline {
         DOCKERHUB_CREDENTIALS_ID = 'dockerhubkey' // ID created in Jenkins Credentials store
     }
 
-    triggers {
-        githubPush()
-    }
-
     stages {
         stage('Code Cloning') {
             steps {
