@@ -1,0 +1,70 @@
+stages:
+  - build
+  - test
+  - deploy
+
+image: docker:latest
+
+services:
+  - docker:dind
+
+variables:
+  IMAGE_NAME: "ayusht45cyber/notes-keeping"
+  IMAGE_TAG: "latest"
+  DOCKER_TLS_CERTDIR: ""
+
+build_job:
+  stage: build
+  script:
+    - echo "Building the Docker image..."
+    - docker build -t "$IMAGE_NAME:$IMAGE_TAG" .
+    - docker save -o image.tar "$IMAGE_NAME:$IMAGE_TAG"
+  artifacts:
+    paths:
+      - image.tar  # Ensures the image is available in deploy stage
+
+test_job:
+  stage: test
+  script:
+    - echo "Testing the app"
+    
+    # Load the Docker image to be tested
+    - echo "Loading the Docker image..."
+    - docker load -i image.tar
+    
+    # Run the container and check if the app's main process starts
+    - echo "Running the container to check if the app starts..."
+    - docker run -d --name test-container "$IMAGE_NAME:$IMAGE_TAG"  # Running in detached mode
+    
+    # Check if nginx process is running inside the container
+    - echo "Checking if nginx process is running..."
+    - docker exec test-container pgrep -fl "nginx" || exit 1  # Check for nginx process
+    
+    # Test if nginx is listening on port 80 (or the relevant port)
+    - echo "Checking if nginx is listening on port 80..."
+    - docker exec test-container netstat -an | grep ':80 ' || exit 1  # Replace with correct port if needed
+    
+    # Test if the app responds to an HTTP request (e.g., health check or home page)
+    - echo "Testing if the app responds to HTTP request..."
+    - docker exec test-container curl -s http://localhost || exit 1  # This tests the homepage or default route
+    
+    # Test if the app responds to a specific endpoint (e.g., /health or /status)
+    - echo "Testing if the app responds to /health endpoint..."
+    - docker exec test-container curl -s http://localhost/health || exit 1  # Adjust if your app has a health check endpoint
+    
+    # Stop the container after testing
+    - echo "Stopping the container..."
+    - docker stop test-container
+
+
+
+
+deploy_job:
+  stage: deploy
+  script:
+    - echo "Logging into Docker Hub..."
+    - echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
+    - echo "Loading Docker image..."
+    - docker load -i image.tar
+    - echo "Pushing Docker image..."
+    - docker push "$IMAGE_NAME:$IMAGE_TAG"
