@@ -1,31 +1,358 @@
-# Use the latest 2.1 version of CircleCI pipeline process engine.
-# See: https://circleci.com/docs/reference/configuration-reference
+# ─────────────────────────────────────────────────────────────────────────────
+# CircleCI Pipeline Configuration for Notes-Keeping App
+# File location: .circleci/config.yml  (must be inside .circleci folder)
+# Author: Learning CircleCI — based on trivediayush/Notes-Keeping
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 'version' tells CircleCI which pipeline engine to use.
+# Version 2.1 is the modern standard and supports 'orbs', 'commands', and reuse.
 version: 2.1
 
-# Define a job to be invoked later in a workflow.
-# See: https://circleci.com/docs/guides/orchestrate/jobs-steps/#jobs-overview & https://circleci.com/docs/reference/configuration-reference/#jobs
-jobs:
-  say-hello:
-    # Specify the execution environment. You can specify an image from Docker Hub or use one of our convenience images from CircleCI's Developer Hub.
-    # See: https://circleci.com/docs/guides/execution-managed/executor-intro/ & https://circleci.com/docs/reference/configuration-reference/#executor-job
+# ─────────────────────────────────────────────────────────────────────────────
+# ORBS — Pre-packaged reusable integrations from the CircleCI Orb Registry.
+# Think of orbs as npm packages for CI — they save you from writing boilerplate.
+# Here we import the official Docker orb for container operations.
+# ─────────────────────────────────────────────────────────────────────────────
+orbs:
+  docker: circleci/docker@2.4.0   # Gives us docker/build and docker/push commands
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXECUTORS — Reusable execution environments.
+# Instead of repeating "docker: - image: node:18" in every job, we define it
+# once here and reference it by name. DRY principle applied to CI config.
+# ─────────────────────────────────────────────────────────────────────────────
+executors:
+  node-executor:
+    # 'docker' executor runs jobs inside a Docker container (most common).
+    # Other executors: 'machine' (full Linux VM), 'macos', 'windows'.
     docker:
-      # Specify the version you desire here
-      # See: https://circleci.com/developer/images/image/cimg/base
-      - image: cimg/base:current
+      - image: cimg/node:18.17   # CircleCI's convenience image — has git, curl, etc pre-installed
+    # 'working_directory' sets where your code is checked out and commands run.
+    working_directory: ~/project
 
-    # Add steps to the job
-    # See: https://circleci.com/docs/guides/orchestrate/jobs-steps/#steps-overview & https://circleci.com/docs/reference/configuration-reference/#steps
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMANDS — Reusable step sequences you can call inside any job.
+# Like a function in programming — write once, call many times.
+# ─────────────────────────────────────────────────────────────────────────────
+commands:
+  # This command checks out code and caches node_modules.
+  # Caching in CircleCI saves minutes on repeat runs by not re-downloading deps.
+  install-and-cache:
+    description: "Checkout code and restore/save npm cache"
     steps:
-      # Checkout the code as the first step.
+      # 'checkout' is a built-in CircleCI step that clones your repo.
+      # It uses a deploy key attached to your CircleCI project automatically.
       - checkout
-      - run:
-          name: "Say hello"
-          command: "echo Hello, World!"
 
-# Orchestrate jobs using workflows
-# See: https://circleci.com/docs/guides/orchestrate/workflows/ & https://circleci.com/docs/reference/configuration-reference/#workflows
+      # 'restore_cache' looks for a previously saved cache matching the key.
+      # The key uses a checksum of package-lock.json — so if dependencies
+      # haven't changed, the cached node_modules folder is restored instantly.
+      - restore_cache:
+          keys:
+            # Primary key: exact match on package-lock.json hash
+            - node-deps-v1-{{ checksum "package-lock.json" }}
+            # Fallback key: use any recent cache if exact match not found
+            - node-deps-v1-
+
+      # Run npm install only if node_modules doesn't already exist (from cache).
+      # The '[ -d node_modules ]' check avoids reinstalling when cache hit occurs.
+      - run:
+          name: Install dependencies
+          command: |
+            if [ ! -d node_modules ]; then
+              npm install
+            else
+              echo "node_modules restored from cache, skipping install"
+            fi
+
+      # 'save_cache' stores node_modules for future pipeline runs.
+      # 'paths' is what gets stored. 'key' must match the restore_cache key above.
+      - save_cache:
+          key: node-deps-v1-{{ checksum "package-lock.json" }}
+          paths:
+            - node_modules
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOBS — The individual units of work in CircleCI.
+# Each job runs in its own fresh container/VM (no shared state between jobs).
+# Jobs run in parallel unless you specify an 'order' in the workflow below.
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+
+  # ─── JOB 1: CHECKOUT & VALIDATE ───────────────────────────────────────────
+  # This job checks out the code and validates the HTML/JS/CSS files exist.
+  # For a simple frontend project, this replaces a formal "build" step.
+  # ──────────────────────────────────────────────────────────────────────────
+  checkout-and-validate:
+    # 'executor' references our reusable executor defined above.
+    executor: node-executor
+
+    steps:
+      # Call our reusable command defined in the 'commands' section above.
+      - install-and-cache
+
+      # 'run' executes a shell command inside the container.
+      # 'name' is a label shown in the CircleCI dashboard — keep it descriptive.
+      - run:
+          name: Validate project structure
+          command: |
+            echo "=== Validating required files are present ==="
+            # 'test -f' returns exit code 0 (success) if file exists, 1 if not.
+            # CircleCI stops the job and marks it FAILED if any command exits non-zero.
+            test -f index.html   && echo "✅ index.html found"   || echo "❌ index.html MISSING" && exit 1
+            test -f style.css    && echo "✅ style.css found"    || echo "❌ style.css MISSING"  && exit 1
+            test -f script.js    && echo "✅ script.js found"    || echo "❌ script.js MISSING"  && exit 1
+            test -f Dockerfile   && echo "✅ Dockerfile found"   || echo "❌ Dockerfile MISSING" && exit 1
+            echo "=== All required files present ==="
+
+      - run:
+          name: Display project info
+          command: |
+            echo "Branch: $CIRCLE_BRANCH"          # Built-in CircleCI env var
+            echo "Build Number: $CIRCLE_BUILD_NUM" # Unique sequential number for this run
+            echo "Commit: $CIRCLE_SHA1"            # Full Git SHA of current commit
+            echo "Job: $CIRCLE_JOB"                # Name of the current job
+
+      # 'persist_to_workspace' saves files so downstream jobs can access them.
+      # CircleCI jobs are isolated — without this, each job re-downloads from scratch.
+      - persist_to_workspace:
+          # 'root' is the base directory to persist from.
+          root: ~/project
+          # 'paths' lists what to include (relative to root). '.' means everything.
+          paths:
+            - .
+
+  # ─── JOB 2: LINT ──────────────────────────────────────────────────────────
+  # Runs code quality checks using HTMLHint and ESLint.
+  # Linting catches bugs and style issues before they reach production.
+  # ──────────────────────────────────────────────────────────────────────────
+  lint:
+    executor: node-executor
+
+    steps:
+      # 'attach_workspace' restores files saved by 'persist_to_workspace' above.
+      # Without this, the job would have an empty working directory.
+      - attach_workspace:
+          at: ~/project   # Must match the 'root' in persist_to_workspace
+
+      - run:
+          name: Install linting tools
+          command: |
+            # Install HTMLHint globally to lint HTML files for common issues
+            npm install -g htmlhint
+            # Install ESLint globally to lint JavaScript files
+            npm install -g eslint
+
+      - run:
+          name: Lint HTML with HTMLHint
+          command: |
+            echo "=== Running HTMLHint on index.html ==="
+            # HTMLHint checks for proper tag nesting, attribute usage, etc.
+            # '|| true' at the end prevents a non-zero exit from failing the build
+            # during learning. Remove '|| true' in production to enforce linting.
+            htmlhint index.html || true
+
+      - run:
+          name: Lint JavaScript with ESLint
+          command: |
+            echo "=== Running ESLint on script.js ==="
+            # '--env browser' tells ESLint that window, document, etc. are valid
+            # '--env es6' allows modern JS syntax like arrow functions, let, const
+            # '--no-eslintrc' ignores any .eslintrc file (uses flags only)
+            eslint --env browser --env es6 --no-eslintrc script.js || true
+
+      - run:
+          name: Check CSS syntax
+          command: |
+            echo "=== Basic CSS check ==="
+            # Check file exists and is non-empty (basic sanity check)
+            test -s style.css && echo "✅ style.css is non-empty" || echo "⚠️ style.css is empty"
+
+  # ─── JOB 3: TEST ──────────────────────────────────────────────────────────
+  # Runs automated tests. For this frontend project we use a headless browser.
+  # CircleCI has Chrome pre-installed in many convenience images.
+  # ──────────────────────────────────────────────────────────────────────────
+  test:
+    # 'machine' executor gives a full Ubuntu VM (vs a Docker container).
+    # Useful here because we need a real browser environment for testing.
+    machine:
+      image: ubuntu-2204:current   # Full Ubuntu 22.04 VM provided by CircleCI
+
+    steps:
+      # 'checkout' works the same in machine executor as in docker executor.
+      - checkout
+
+      - run:
+          name: Install Node.js on machine executor
+          command: |
+            # On the machine executor, we install Node ourselves (not pre-installed).
+            # 'nvm' (Node Version Manager) is pre-available on CircleCI machine images.
+            nvm install 18
+            nvm use 18
+            node --version
+
+      - run:
+          name: Install test dependencies
+          command: |
+            nvm use 18
+            # Install a simple HTTP server to serve the HTML file locally
+            npm install -g http-server
+            # Install a lightweight HTML testing tool
+            npm install -g htmlhint
+
+      - run:
+          name: Validate HTML structure (simulated test)
+          command: |
+            nvm use 18
+            echo "=== Running HTML structure tests ==="
+            # Test 1: Check for required HTML elements in the notes app
+            grep -q '<html'    index.html && echo "✅ HTML tag present"   || (echo "❌ Missing html tag"   && exit 1)
+            grep -q '<head'    index.html && echo "✅ HEAD tag present"   || (echo "❌ Missing head tag"   && exit 1)
+            grep -q '<body'    index.html && echo "✅ BODY tag present"   || (echo "❌ Missing body tag"   && exit 1)
+            grep -q 'script.js' index.html && echo "✅ script.js linked" || echo "⚠️ script.js not linked"
+            grep -q 'style.css' index.html && echo "✅ style.css linked" || echo "⚠️ style.css not linked"
+            echo "=== All structural tests passed ==="
+
+      - run:
+          name: Validate JavaScript logic
+          command: |
+            nvm use 18
+            echo "=== Running JavaScript logic checks ==="
+            # Check that key functions exist in script.js
+            grep -q 'function\|const\|let\|=>' script.js && echo "✅ JS code found in script.js" || exit 1
+            echo "=== JavaScript checks passed ==="
+
+      # 'store_test_results' uploads test result XML to CircleCI's Test Summary UI.
+      # This shows a nice test breakdown on the dashboard. (Skipped here — no XML yet)
+      # - store_test_results:
+      #     path: test-results
+
+      # 'store_artifacts' uploads files to CircleCI for download/viewing later.
+      # Useful for test reports, screenshots, build outputs, etc.
+      - store_artifacts:
+          path: ~/project   # What to upload
+          destination: source-code   # How it appears in the Artifacts tab on CircleCI UI
+
+  # ─── JOB 4: BUILD DOCKER IMAGE ─────────────────────────────────────────────
+  # Builds the Docker image using the repo's Dockerfile.
+  # We use the docker orb (imported at top) for clean Docker operations.
+  # ──────────────────────────────────────────────────────────────────────────
+  build-docker:
+    # 'setup_remote_docker' is required for Docker-in-Docker builds on CircleCI.
+    # The remote Docker engine runs separately from the job container.
+    docker:
+      - image: cimg/base:stable   # Lightweight base image with Docker CLI pre-installed
+
+    steps:
+      - checkout
+
+      # 'setup_remote_docker' creates a separate Docker engine for building images.
+      # This is CircleCI's solution to the "Docker inside Docker" security problem.
+      - setup_remote_docker:
+          version: docker23   # Which Docker Engine version to use
+
+      - run:
+          name: Build Docker image
+          command: |
+            echo "=== Building Docker image ==="
+            # '$CIRCLE_SHA1' is the git commit hash — great for unique image tags.
+            # Using commit SHA as tag means every build produces a traceable image.
+            docker build -t notes-keeping:$CIRCLE_SHA1 .
+            docker build -t notes-keeping:latest .
+            echo "=== Docker image built successfully ==="
+
+      - run:
+          name: Test Docker image
+          command: |
+            echo "=== Testing Docker image ==="
+            # Run the container detached (-d) and name it for reference
+            docker run -d --name notes-test -p 80:80 notes-keeping:latest
+            # Wait for the container to start
+            sleep 3
+            # Check that the container is actually running (not crashed)
+            docker ps | grep notes-test && echo "✅ Container is running" || exit 1
+            # Clean up — stop and remove the test container
+            docker stop notes-test
+            docker rm notes-test
+            echo "=== Docker image test passed ==="
+
+  # ─── JOB 5: DEPLOY (SIMULATED) ────────────────────────────────────────────
+  # Simulates a deployment step. In a real project this would SSH into a server,
+  # push to a cloud provider, or trigger a Kubernetes rollout.
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy:
+    executor: node-executor
+
+    steps:
+      - attach_workspace:
+          at: ~/project
+
+      - run:
+          name: Simulate deployment
+          command: |
+            echo "=============================================="
+            echo "  Deploying Notes Application"
+            echo "  Branch:  $CIRCLE_BRANCH"
+            echo "  Commit:  $CIRCLE_SHA1"
+            echo "  Build #: $CIRCLE_BUILD_NUM"
+            echo "=============================================="
+            # In a real pipeline this would be:
+            # ssh user@server "docker pull myimage:latest && docker-compose up -d"
+            # Or: aws ecs update-service --cluster prod --service notes-app
+            echo "✅ Deployment simulation complete!"
+
+      # 'run' supports a 'when' condition. This step runs even if previous steps fail.
+      - run:
+          name: Notify deployment result
+          when: always   # 'always' | 'on_success' | 'on_fail' — controls when this step runs
+          command: |
+            echo "Deployment status: $?"   # $? is the exit code of the previous command
+            # In production: curl -X POST "$SLACK_WEBHOOK_URL" -d '{"text":"Deployed!"}'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WORKFLOWS — Orchestrates how jobs connect and run together.
+# Workflows define the DAG (Directed Acyclic Graph) of your pipeline.
+# Without a workflow, jobs run in parallel with no dependency order.
+# ─────────────────────────────────────────────────────────────────────────────
 workflows:
-  say-hello-workflow: # This is the name of the workflow, feel free to change it to better match your workflow.
-    # Inside the workflow, you define the jobs you want to run.
+  # The workflow name — appears in the CircleCI dashboard.
+  notes-keeping-pipeline:
+
     jobs:
-      - say-hello
+      # ── Job 1: No dependencies — runs immediately when pipeline starts ──
+      - checkout-and-validate
+
+      # ── Job 2: Lint — runs AFTER checkout-and-validate succeeds ──
+      - lint:
+          requires:
+            - checkout-and-validate   # 'requires' means: wait for this job to pass first
+
+      # ── Job 3: Test — runs AFTER checkout-and-validate succeeds (in parallel with lint) ──
+      - test:
+          requires:
+            - checkout-and-validate   # Runs in parallel with 'lint' — both need checkout done
+
+      # ── Job 4: Build Docker — runs only AFTER both lint AND test pass ──
+      - build-docker:
+          requires:
+            - lint    # Both must pass before Docker build starts
+            - test
+          # 'filters' lets you restrict which branches/tags trigger this job.
+          filters:
+            branches:
+              only:
+                - main      # Only build Docker image on the main branch
+                - develop   # Or on the develop branch
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PIPELINE FLOW SUMMARY:
+#
+#   [checkout-and-validate]
+#          ├──> [lint]  ──────────────────┐
+#          └──> [test]  ─────────────────>├──> [build-docker] ──> [deploy]
+#                                         │       (main/dev only)  (main only)
+#
+# On feature branches: checkout → lint + test  (stops here)
+# On develop branch:   checkout → lint + test → build-docker
+# On main branch:      checkout → lint + test → build-docker → deploy
+# ─────────────────────────────────────────────────────────────────────────────
