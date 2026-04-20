@@ -1,5 +1,5 @@
 pipeline {
-    agent any
+    agent { label 'docker_000140' }
 
     environment {
         IMAGE_NAME = 'devopsengineerr11/mynote'
