@@ -1,4 +1,4 @@
-# Notes Application
+# Notes Application #
 
 This project implements a Notes Application using HTML, CSS, and JavaScript. It provides a user-friendly interface for adding, deleting, and managing notes.
 
