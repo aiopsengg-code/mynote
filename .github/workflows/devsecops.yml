@@ -15,7 +15,7 @@ jobs:
           npm install -g snyk
           snyk test --all-projects || true
 
-  # 2. BUILD STAGE (Runs only if Scan passes)
+  # 2. BUILD STAGE
   build:
     needs: sast-scan
     runs-on: ubuntu-latest
@@ -23,8 +23,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build Docker Image
         run: docker build -t devopsengineerr11/mynote:latest .
-      
-      # Upload the built image to GitHub Artifacts so the next stage can use it
       - name: Save Image
         run: docker save devopsengineerr11/mynote:latest > mynote-image.tar
       - uses: actions/upload-artifact@v4
