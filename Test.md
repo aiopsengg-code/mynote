@@ -1,5 +1,5 @@
 # Manual Testing Plan for Notes Application
-
+ 
 ## 1️⃣ Environment Setup
 
 - Ensure **Docker** is installed and running.
